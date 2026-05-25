@@ -45,16 +45,13 @@ export default function Apply() {
   const [paystackLoaded, setPaystackLoaded] = useState(false);
 
  useEffect(() => {
-  // If already loaded
   if (window.PaystackPop) {
     setPaystackLoaded(true);
     return;
   }
 
   const script = document.createElement('script');
-
   script.src = 'https://js.paystack.co/v1/inline.js';
-
   script.async = true;
 
   script.onload = () => {
@@ -66,7 +63,6 @@ export default function Apply() {
   };
 
   document.body.appendChild(script);
-
 }, []);
 
   function handleChange(e) {
@@ -74,34 +70,35 @@ export default function Apply() {
     setForm((prev) => ({ ...prev, [name]: value }));
     if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
   }
-
- async function handleSubmit(e) {
+async function handleSubmit(e) {
   e.preventDefault();
-
   setServerError('');
 
   const validationErrors = validate(form);
-
   if (Object.keys(validationErrors).length > 0) {
     setErrors(validationErrors);
     return;
   }
 
-  // Check Paystack
-  if (typeof window === 'undefined' || !window.PaystackPop) {
-    setServerError('Paystack failed to load. Refresh page and try again.');
+  // ✅ Ensure Paystack is ready
+  if (!paystackLoaded || typeof window.PaystackPop === 'undefined') {
+    setServerError('Payment system is still loading. Please try again.');
+    return;
+  }
+
+  // ✅ Ensure API key exists
+  const publicKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY;
+  if (!publicKey) {
+    setServerError('Payment configuration error (missing public key).');
     return;
   }
 
   setSubmitting(true);
 
   try {
-    // Register application first
     const regRes = await fetch('/api/register-application', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     });
 
@@ -113,13 +110,13 @@ export default function Apply() {
 
     const reference = regData.reference;
 
-    // Initialize Paystack
     const handler = window.PaystackPop.setup({
-      key: process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY,
+      key: publicKey,
 
       email: form.email,
 
-      amount: 20 * 100 * 100, // $20 converted safely
+      // ✅ FIXED AMOUNT (Paystack uses kobo/pesewas equivalent)
+      amount: 20 * 100,
 
       currency: 'KES',
 
@@ -140,32 +137,31 @@ export default function Apply() {
         ],
       },
 
-      callback: async function (response) {
-        try {
-          const verifyRes = await fetch('/api/verify-payment', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              reference: response.reference,
-            }),
-          });
-
-          const verifyData = await verifyRes.json();
-
-          if (verifyData.success) {
-            router.push(`/success?ref=${reference}`);
-          } else {
-            setServerError('Payment verification failed.');
+      // ✅ FIXED CALLBACK (must be standard function)
+      callback: function (response) {
+        fetch('/api/verify-payment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reference: response.reference,
+          }),
+        })
+          .then((res) => res.json())
+          .then((verifyData) => {
+            if (verifyData.success) {
+              router.push(`/success?ref=${reference}`);
+            } else {
+              setServerError('Payment verification failed.');
+              setSubmitting(false);
+            }
+          })
+          .catch(() => {
+            setServerError('Verification failed.');
             setSubmitting(false);
-          }
-        } catch (error) {
-          setServerError('Verification failed.');
-          setSubmitting(false);
-        }
+          });
       },
 
+      // ✅ FIXED ON CLOSE
       onClose: function () {
         setSubmitting(false);
         setServerError('Payment window closed.');
@@ -173,14 +169,8 @@ export default function Apply() {
     });
 
     handler.openIframe();
-
   } catch (error) {
-    console.error(error);
-
-    setServerError(
-      error.message || 'Something went wrong. Please try again.'
-    );
-
+    setServerError(error.message || 'Something went wrong. Please try again.');
     setSubmitting(false);
   }
 }
