@@ -71,7 +71,11 @@ export default async function handler(req, res) {
     const paystackData = await paystackResponse.json();
 
     // ✅ STRICT validation (FIXED)
-    if (!paystackData.status || paystackData.data?.status !== 'success') {
+ if (
+  !paystackData ||
+  paystackData.status !== true ||
+  paystackData.data?.status !== 'success'
+) {
       return res.status(400).json({
         success: false,
         message: 'Payment not successful',
